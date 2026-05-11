@@ -5,4 +5,4 @@ pillow
 python-multipart
 opencv-python-headless
 python-dotenv
-numpy
+numpy>=1.26

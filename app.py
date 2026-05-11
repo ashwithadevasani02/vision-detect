@@ -24,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODEL_PATH = os.getenv("MODEL_PATH", "../rrp32.pt")
+MODEL_PATH = os.getenv("MODEL_PATH", "./rrp32.pt")
 model = YOLO(MODEL_PATH)
 FRONTEND_FILE = Path(__file__).with_name("index.html")
 if not FRONTEND_FILE.exists():

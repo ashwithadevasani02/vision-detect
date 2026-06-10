@@ -2,6 +2,31 @@
 
 A full-stack object detection web app powered by **YOLO** (Ultralytics). Upload images or videos, run inference with a custom-trained model, and view annotated results in the browser — including live bounding-box overlays on video playback.
 
+## Topics
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [How Features Are Implemented](#how-features-are-implemented)
+  - [Image detection](#1-image-detection)
+  - [Video detection](#2-video-detection-frame-sampling)
+  - [Live video overlay](#3-live-video-overlay-client-side)
+  - [Annotated video export](#4-annotated-video-export)
+  - [Configurable detection settings](#5-configurable-detection-settings)
+  - [Model loading and environment](#6-model-loading-and-environment)
+- [API Reference](#api-reference)
+  - [`GET /`](#get-)
+  - [`POST /detect`](#post-detect)
+  - [`POST /download-annotated-video`](#post-download-annotated-video)
+  - [`GET /health`](#get-health)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Local development](#local-development)
+  - [Docker](#docker)
+- [Dependencies](#dependencies)
+- [Supported Media Formats](#supported-media-formats)
+- [License](#license)
+
 ---
 
 ## Features

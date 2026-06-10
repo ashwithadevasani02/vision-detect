@@ -318,6 +318,3 @@ Open [http://localhost:8000](http://localhost:8000).
 
 ---
 
-## License
-
-Add your license here if applicable.

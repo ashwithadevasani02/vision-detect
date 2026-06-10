@@ -25,7 +25,28 @@ app.add_middleware(
 )
 
 MODEL_PATH = os.getenv("MODEL_PATH", "./rrp32.pt")
-model = YOLO(MODEL_PATH)
+model = None
+MODEL_LOAD_ERROR = None
+
+
+def get_model() -> YOLO:
+    global model, MODEL_LOAD_ERROR
+    if model is not None:
+        return model
+    if MODEL_LOAD_ERROR is not None:
+        raise HTTPException(503, f"Model failed to load: {MODEL_LOAD_ERROR}")
+    try:
+        model = YOLO(MODEL_PATH)
+        return model
+    except Exception as exc:
+        MODEL_LOAD_ERROR = str(exc)
+        raise HTTPException(503, f"Model failed to load: {MODEL_LOAD_ERROR}")
+
+
+def get_model_names() -> dict:
+    return get_model().names
+
+
 FRONTEND_FILE = Path(__file__).with_name("index.html")
 if not FRONTEND_FILE.exists():
     FRONTEND_FILE = Path(__file__).with_name("index.html")
@@ -86,13 +107,14 @@ def draw_boxes_pil(image: Image.Image, detections: list) -> Image.Image:
 
 def infer_pil(pil_img: Image.Image, conf: float, frame_idx) -> list:
     infer = resize_for_inference(pil_img)
-    results = model(infer, conf=conf, verbose=False)
+    current_model = get_model()
+    results = current_model(infer, conf=conf, verbose=False)
     scaled = scale_boxes(
         [box.xyxy[0].tolist() for box in results[0].boxes],
         infer.size, pil_img.size,
     )
     return [{
-        "class":      model.names[int(box.cls)],
+        "class":      current_model.names[int(box.cls)],
         "confidence": round(float(box.conf), 3),
         "bbox":       [round(v, 1) for v in scaled[idx]],
         "frame":      frame_idx,
@@ -387,7 +409,9 @@ def health():
     return {
         "status":        "ok",
         "model":         MODEL_PATH,
-        "classes":       model.names,
+        "model_loaded":  model is not None,
+        "load_error":    MODEL_LOAD_ERROR,
+        "classes":       get_model_names() if model is not None else None,
         "cv2_available": CV2_AVAILABLE,
         "infer_max_dim": INFER_MAX_DIM,
     }

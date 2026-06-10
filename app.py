@@ -4,9 +4,9 @@ load_dotenv()
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, BackgroundTasks, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from ultralytics import YOLO
 from PIL import Image, ImageDraw
 from pathlib import Path
+from typing import Any
 import io, base64, os, uvicorn, tempfile, traceback, json, time
 
 try:
@@ -29,13 +29,14 @@ model = None
 MODEL_LOAD_ERROR = None
 
 
-def get_model() -> YOLO:
+def get_model() -> Any:
     global model, MODEL_LOAD_ERROR
     if model is not None:
         return model
     if MODEL_LOAD_ERROR is not None:
         raise HTTPException(503, f"Model failed to load: {MODEL_LOAD_ERROR}")
     try:
+        from ultralytics import YOLO
         model = YOLO(MODEL_PATH)
         return model
     except Exception as exc:

@@ -1,320 +1,226 @@
-# VisionDetect
+# VisionDetect — Smart Object Detection
 
-A full-stack object detection web app powered by **YOLO** (Ultralytics). Upload images or videos, run inference with a custom-trained model, and view annotated results in the browser — including live bounding-box overlays on video playback.
+VisionDetect is a modern, high-fidelity object detection web application powered by **YOLO** (Ultralytics v11) and built using a **React frontend** and a **Node.js Express backend**. It supports uploading images and videos, displaying live bounding boxes synchronized on a video canvas overlay, and exporting full-resolution videos with burned-in annotations.
 
-## Topics
-
-- [Features](#features)
-- [Architecture](#architecture)
-- [How Features Are Implemented](#how-features-are-implemented)
-  - [Image detection](#1-image-detection)
-  - [Video detection](#2-video-detection-frame-sampling)
-  - [Live video overlay](#3-live-video-overlay-client-side)
-  - [Annotated video export](#4-annotated-video-export)
-  - [Configurable detection settings](#5-configurable-detection-settings)
-  - [Model loading and environment](#6-model-loading-and-environment)
-- [API Reference](#api-reference)
-  - [`GET /`](#get-)
-  - [`POST /detect`](#post-detect)
-  - [`POST /download-annotated-video`](#post-download-annotated-video)
-  - [`GET /health`](#get-health)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Local development](#local-development)
-  - [Docker](#docker)
-- [Dependencies](#dependencies)
-- [Supported Media Formats](#supported-media-formats)
-- [License](#license)
+The interface is styled with a simple, pleasant, light green nature-inspired aesthetic using the **Plus Jakarta Sans** typeface.
 
 ---
 
-## Features
+## Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **Image detection** | Upload PNG, JPG, or WEBP images and get bounding boxes drawn on the result |
-| **Video detection** | Sample frames from MP4, MOV, WEBM, AVI, and other common formats |
-| **Configurable inference** | Adjust confidence threshold, NMS IoU, frame stride, and max sampled frames |
-| **Live video overlay** | Canvas overlay syncs bounding boxes to video playback using nearest-frame matching |
-| **Annotated video export** | Server-side re-encoding burns boxes into every frame and returns an MP4 download |
-| **Detection summary** | Stats for total objects, unique classes, and average confidence |
-| **Health check** | `/health` endpoint reports model path, class names, and dependency status |
-| **Docker deployment** | Production-ready container with OpenCV system libraries |
+- **Image Object Detection**: Upload any image (PNG, JPG, WEBP) to detect objects. The client renders the returned annotated image with colored bounding boxes and probability metrics.
+- **Video Object Detection**: Upload high-resolution videos (MP4, MOV, WEBM, AVI, etc.) to perform frame-sampled inference. The client extracts video metadata (duration, dimensions) and streams frames to the server.
+- **Client-Side Live Canvas Sync**: Plays the uploaded video in an HTML5 video player and matches the current playback frame to YOLO inference results using a high-frequency canvas overlay.
+- **Server-Side Video Export**: Re-encodes videos on the server, burning colored bounding boxes and labels into every frame, and streams the finished file back to the browser as an attachment.
+- **Predefined YOLO Model Integration**: Integrates a custom model weights file (`rrp32.pt`) loaded on server initialization to eliminate model startup latency.
 
 ---
 
-## Architecture
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  index.html (frontend)                                      │
-│  • Drag-and-drop upload                                     │
-│  • Settings panel (stride, frames, conf, IoU)                 │
-│  • Canvas video overlay (client-side)                       │
+│  React Frontend (Vite Client) - port 5173                   │
+│  • Drag-and-drop file upload with metadata extraction       │
+│  • Bounding box overlay canvas synced with HTML5 Video RAF  │
+│  • Metric totals (Objects found, unique classes, avg conf)  │
 └──────────────────────────┬──────────────────────────────────┘
-                           │  POST /detect
-                           │  POST /download-annotated-video
+                           │  POST /api/detect
+                           │  POST /api/download-annotated-video
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  app.py (FastAPI backend)                                   │
-│  • YOLO model inference (Ultralytics)                       │
-│  • PIL for image annotation                                 │
-│  • OpenCV for video decode/encode                           │
+│  Node.js Express Backend Server - port 5005                 │
+│  • Multipart file handling (Multer)                         │
+│  • Sequential worker queue to communicate with Python       │
+└──────────────────────────┬──────────────────────────────────┘
+                           │  stdin / stdout (JSON Lines)
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  yolo_worker.py (Persistent Python Worker)                  │
+│  • Persistent YOLO model instance loading (rrp32.pt)        │
+│  • OpenCV-based frame decoding and video re-encoding        │
+│  • Parallel processing of inference & bounding box burning  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-The frontend is a single-page app served at `/` from `index.html`. The backend loads a YOLO weights file at startup and exposes REST endpoints for detection and video export.
+The system uses a decoupled client-server pattern:
+1. **Frontend (`/frontend`)**: A React SPA that captures files and renders analytics.
+2. **Backend (`/backend`)**: A Node Express server. To run Python-based YOLO models without spawn delays or heavy C++ bindings, it communicates with a persistent Python process (`yolo_worker.py`) using structured JSON Line streams over `stdin`/`stdout`.
 
 ---
 
-## How Features Are Implemented
+## Directory Structure
 
-### 1. Image detection
-
-**Flow:** User uploads an image → `POST /detect` → backend opens it with Pillow → runs YOLO → draws boxes → returns JSON.
-
-**Backend (`app.py`):**
-
-- `is_video_file()` checks MIME type and extension to route image vs video.
-- `resize_for_inference()` scales large images so the longest side is at most `INFER_MAX_DIM` (default `1280`) before inference, then `scale_boxes()` maps coordinates back to the original resolution.
-- `infer_pil()` calls `model(infer, conf=conf)` and returns a list of `{ class, confidence, bbox, frame }`.
-- `draw_boxes_pil()` uses Pillow `ImageDraw` to render colored rectangles and labels.
-- The annotated image is JPEG-encoded and returned as a base64 data URL in `annotated_image`.
-
-**Frontend (`index.html`):**
-
-- `setFile()` previews the image via `FileReader`.
-- `runDetection()` sends a `multipart/form-data` request with query params for thresholds.
-- `showResults()` displays `data.annotated_image` in the result card.
-
----
-
-### 2. Video detection (frame sampling)
-
-**Flow:** User uploads a video → backend writes it to a temp file → OpenCV reads frames at a configurable stride → YOLO runs on each sampled frame → detections are NMS-merged → first sampled frame is annotated for preview.
-
-**Backend:**
-
-- Requires `opencv-python-headless` (`CV2_AVAILABLE` flag).
-- `frame_stride` (default `30`): only every Nth frame is inferred.
-- `max_frames` (default `10`): caps how many frames are processed.
-- `nms_merge()` applies per-class Non-Maximum Suppression using IoU to deduplicate boxes across sampled frames.
-- Response includes:
-  - `detections` — NMS-merged list (shown in the UI stats/list)
-  - `raw_detections` — all per-frame hits (used for video overlay and export)
-  - `video_fps`, `video_width`, `video_height` — metadata for the client overlay
-
-**Frontend:**
-
-- Video thumbnail is extracted from the first frame using a hidden `<video>` + `<canvas>`.
-- A metadata badge shows resolution, duration, file size, and MIME type.
-- A simulated progress bar runs during upload/inference for UX feedback.
-
----
-
-### 3. Live video overlay (client-side)
-
-**Implementation:** `syncVideoOverlay()` in `index.html`.
-
-- Plays the original video in a `<video>` element.
-- A transparent `<canvas>` sits on top.
-- On each animation frame, `currentFrame = floor(currentTime * fps)`.
-- `pickFrameDetections()` finds the sampled frame index closest to the current playback frame and draws only those boxes.
-- Box colors match the backend palette (`COLORS` array).
-
-This gives a real-time preview without re-encoding the full video on the server.
-
----
-
-### 4. Annotated video export
-
-**Endpoint:** `POST /download-annotated-video`
-
-**Flow:** Client sends the original video file plus `detections_json` (from `raw_detections`) and `fps` → server decodes every frame → draws boxes with OpenCV → writes MP4 → streams the file back.
-
-**Backend:**
-
-- `build_frame_map()` groups detections by frame index once (avoids per-frame lookup bugs).
-- `nearest_frame_dets()` picks the closest sampled frame for each output frame.
-- `hex_to_bgr()` converts UI colors to OpenCV BGR order.
-- Temp files are cleaned up via FastAPI `BackgroundTasks` after the response is sent.
-
-**Note:** The current frontend UI does not expose a download button for this endpoint, but the API is fully implemented and can be called directly or wired into the UI.
-
----
-
-### 5. Configurable detection settings
-
-Exposed in the **VIDEO OPTIONS** panel and passed as query parameters to `/detect`:
-
-| Parameter | Query key | Default | Range | Purpose |
-|-----------|-----------|---------|-------|---------|
-| Frame stride | `frame_stride` | 30 | 1–300 | Skip frames between inferences |
-| Max frames | `max_frames` | 10 | 1–120 | Limit sampled frames |
-| Confidence | `conf_threshold` | 0.25 | 0.01–1.0 | YOLO confidence cutoff |
-| NMS IoU | `iou_threshold` | 0.50 | 0.01–1.0 | IoU threshold for cross-frame dedup |
-
-For images, only `conf_threshold` affects inference; stride and max frames are ignored.
-
----
-
-### 6. Model loading and environment
-
-At startup, `app.py` loads:
-
-```python
-MODEL_PATH = os.getenv("MODEL_PATH", "./rrp32.pt")
-model = YOLO(MODEL_PATH)
 ```
-
-Place your `.pt` weights file in the project root (or set `MODEL_PATH` in a `.env` file). Class names come from the model itself via `model.names`.
-
-Other environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MODEL_PATH` | `./rrp32.pt` | Path to YOLO weights |
-| `INFER_MAX_DIM` | `1280` | Max dimension for inference resize (`0` disables) |
-| `PORT` | `8000` (Docker) / `8002` (local `__main__`) | Server port |
+visiondetect/
+├── backend/
+│   ├── temp_uploads/     # Auto-deleted temporary files
+│   ├── server.js         # Express app, endpoint routing & worker queue
+│   ├── yolo_worker.py    # Python worker process (YOLO, OpenCV)
+│   ├── package.json      # Express, multer, cors, dotenv dependencies
+│   └── rrp32.pt          # Custom YOLO model weights file
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── DetectionList.jsx  # Metrics and individual label details
+│   │   │   └── VideoPlayer.jsx    # Playback synced with bounding box overlay
+│   │   │   └── UploadZone.jsx     # Handles drag-drop & metadata parsing
+│   │   ├── App.jsx                # App shell, API orchestration, progress bars
+│   │   ├── index.css              # Light green organic style system
+│   │   └── main.jsx               # React client bootstrap
+│   ├── eslint.config.js  # ESLint flat rules configuration
+│   ├── package.json      # React, Vite, ESLint dependencies
+│   └── vite.config.js    # Vite configurations
+└── requirements.txt      # Python system dependencies (ultralytics, opencv, pillow)
+```
 
 ---
 
 ## API Reference
 
-### `GET /`
+All requests must be made to the Node.js Express server running at `http://localhost:5005`.
 
-Serves the frontend (`index.html`).
-
-### `POST /detect`
-
-Detect objects in an uploaded image or video.
-
-**Body:** `multipart/form-data` with field `file`.
-
-**Query params:** `frame_stride`, `max_frames`, `conf_threshold`, `iou_threshold`
-
-**Response:**
-
-```json
-{
-  "detections": [{ "class": "person", "confidence": 0.91, "bbox": [10, 20, 100, 200], "frame": 0 }],
-  "raw_detections": [...],
-  "annotated_image": "data:image/jpeg;base64,...",
-  "total": 1,
-  "video_fps": 30.0,
-  "video_width": 1920,
-  "video_height": 1080
-}
-```
-
-### `POST /download-annotated-video`
-
-Re-encode video with burned-in bounding boxes.
-
-**Body:** `multipart/form-data`
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `file` | file | Original video |
-| `detections_json` | string | JSON array of detections (use `raw_detections` from `/detect`) |
-| `fps` | float | Fallback FPS if not readable from file |
-
-**Response:** `video/mp4` stream with `Content-Disposition: attachment`.
-
-### `GET /health`
-
-```json
-{
-  "status": "ok",
-  "model": "./rrp32.pt",
-  "classes": { "0": "class_a", "1": "class_b" },
-  "cv2_available": true,
-  "infer_max_dim": 1280
-}
-```
+### 1. Health Status check
+Check if the server and the backend YOLO worker process are alive, model is loaded, and OpenCV libraries are available.
+- **Route**: `GET /api/health`
+- **Response Format**: `application/json`
+- **Output Sample**:
+  ```json
+  {
+    "status": "ok",
+    "model": "rrp32.pt",
+    "model_loaded": true,
+    "load_error": null,
+    "classes": {
+      "0": "pedestrian",
+      "1": "rider",
+      "2": "car",
+      "3": "bus",
+      "4": "truck",
+      "5": "bicycle",
+      "6": "motorcycle",
+      "7": "traffic light",
+      "8": "traffic sign",
+      "9": "train"
+    },
+    "cv2_available": true,
+    "infer_max_dim": 1280,
+    "worker_alive": true,
+    "is_ready": true
+  }
+  ```
 
 ---
 
-## Project Structure
+### 2. Detect Objects
+Upload an image or video file to run YOLO inference.
+- **Route**: `POST /api/detect`
+- **Content-Type**: `multipart/form-data`
+- **Parameters**:
+  - `file` (Binary File): Image or Video file.
+  - `frame_stride` (Form field, default `30`): Frame sampling rate. Process every Nth frame of the video.
+  - `max_frames` (Form field, default `10`): Max count of frames to sample and analyze.
+  - `conf_threshold` (Form field, default `0.25`): Bounding box confidence cutoff.
+  - `iou_threshold` (Form field, default `0.5`): NMS IoU threshold for overlapping boxes.
+- **Response Format**: `application/json`
+- **Output Sample**:
+  ```json
+  {
+    "detections": [
+      {
+        "class": "car",
+        "confidence": 0.895,
+        "bbox": [120.4, 250.1, 480.2, 590.8],
+        "frame": 0
+      }
+    ],
+    "raw_detections": [
+      {
+        "class": "car",
+        "confidence": 0.895,
+        "bbox": [120.4, 250.1, 480.2, 590.8],
+        "frame": 0
+      }
+    ],
+    "annotated_image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...",
+    "total": 1,
+    "video_fps": 30.0,
+    "video_width": 1920,
+    "video_height": 1080
+  }
+  ```
 
-```
-visondetect/
-├── app.py              # FastAPI backend — inference, video processing, API routes
-├── index.html          # Frontend SPA — upload UI, overlay, results display
-├── requirements.txt    # Python dependencies
-├── Dockerfile          # Container image for deployment
-├── .env                # Local env vars (not committed; create from template below)
-└── rrp32.pt            # YOLO weights (not in repo — add your own)
-```
+---
+
+### 3. Download Annotated Video
+Burns bounding boxes directly into every frame of the video based on the raw detections array and returns an MP4 file.
+- **Route**: `POST /api/download-annotated-video`
+- **Content-Type**: `multipart/form-data`
+- **Parameters**:
+  - `file` (Binary File): Original raw video file.
+  - `detections_json` (Form field): Stringified JSON array of all raw detections (obtained from `/api/detect`).
+  - `fps` (Form field, default `30`): Frame rate to encode the output video.
+- **Response Format**: `video/mp4` binary stream with header `Content-Disposition: attachment; filename="annotated_<timestamp>.mp4"`.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
+1. **Node.js** (v18.x or v20.x recommended)
+2. **Python** (v3.10 or v3.11 recommended)
+3. Custom YOLO model weights file (`rrp32.pt`) placed inside the `/backend` folder.
 
-- Python 3.11+
-- A YOLO `.pt` weights file
+### Installation
 
-### Local development
+1. **Install Python Packages:**
+   ```bash
+   # From root workspace directory
+   pip install -r requirements.txt
+   ```
 
+2. **Install Node Backend Dependencies:**
+   ```bash
+   cd backend
+   npm install
+   ```
+
+3. **Install React Client Dependencies:**
+   ```bash
+   cd ../frontend
+   npm install
+   ```
+
+### Running Locally
+
+1. **Start the Backend Server:**
+   ```bash
+   cd backend
+   npm start
+   ```
+   *Logs will confirm:*
+   ```text
+   Starting Python YOLO Worker...
+   Express server running on http://localhost:5005
+   YOLO Python Worker is READY.
+   ```
+
+2. **Start the React Frontend Dev Server:**
+   ```bash
+   cd ../frontend
+   npm run dev
+   ```
+   *Open your browser to the URL printed in the console (typically `http://localhost:5173`).*
+
+---
+
+## Cleanups & Linting
+The frontend comes pre-configured with **ESLint** for code quality audits. Run lints using:
 ```bash
-# Clone and enter the project
-cd visondetect
-
-# Create a virtual environment (recommended)
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate     # macOS/Linux
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Add your model weights
-# Copy your .pt file to ./rrp32.pt or set MODEL_PATH in .env
-
-# Optional: create .env
-# MODEL_PATH=./rrp32.pt
-# INFER_MAX_DIM=1280
-
-# Run the server
-python app.py
+cd frontend
+npm run lint
 ```
-
-Open [http://localhost:8002](http://localhost:8002) in your browser.
-
-### Docker
-
+To run a production-ready assets compilation:
 ```bash
-docker build -t visiondetect .
-docker run -p 8000:8000 -e PORT=8000 -v /path/to/model.pt:/app/rrp32.pt visiondetect
+npm run build
 ```
-
-Open [http://localhost:8000](http://localhost:8000).
-
----
-
-## Dependencies
-
-| Package | Role |
-|---------|------|
-| `fastapi` | Web framework and API routes |
-| `uvicorn` | ASGI server |
-| `ultralytics` | YOLO model loading and inference |
-| `pillow` | Image open, resize, and PIL-based annotation |
-| `opencv-python-headless` | Video decode/encode and OpenCV annotation |
-| `python-multipart` | File upload parsing |
-| `python-dotenv` | Load `.env` configuration |
-| `numpy` | Array operations (Ultralytics dependency) |
-
----
-
-## Supported Media Formats
-
-**Images:** Any format Pillow can open (PNG, JPG, JPEG, WEBP, etc.)
-
-**Videos:** MP4, MOV, WEBM, AVI, MKV, M4V, FLV, WMV, 3GP (detected by MIME type or extension). For best compatibility, use H.264-encoded MP4.
-
----
-

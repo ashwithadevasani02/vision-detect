@@ -208,7 +208,6 @@ export default function App() {
   return (
     <div className="wrapper">
       <header>
-        <p className="eyebrow">// VisionDetect — Smart Detection</p>
         <h1>VisionDetect</h1>
         <p className="subtitle">Select an image or high-resolution video. The AI model will identify and locate objects instantly.</p>
       </header>
@@ -216,7 +215,7 @@ export default function App() {
       <div className="grid">
         {/* Input Card */}
         <div className="card">
-          <p className="card-label">// 01 — Input Media</p>
+          <p className="card-label">Input Media</p>
 
           <UploadZone 
             selectedFile={selectedFile}
@@ -262,7 +261,7 @@ export default function App() {
 
         {/* Bounding Box / Result Card */}
         <div className="card" id="result-card" style={{ display: hasResults ? 'block' : 'none' }}>
-          <p className="card-label">// 02 — Annotated Output</p>
+          <p className="card-label">Annotated Output</p>
           
           {!isVideo && annotatedImage && (
             <img id="result-img" src={annotatedImage} alt="annotated result" />

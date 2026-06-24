@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-
 export default function UploadZone({ selectedFile, onFileChange, onMetadataChange }) {
   const [dragOver, setDragOver] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -9,7 +8,6 @@ export default function UploadZone({ selectedFile, onFileChange, onMetadataChang
   const activeObjUrl = useRef('');
 
   useEffect(() => {
-    // Cleanup function to revoke old object URLs
     return () => {
       if (activeObjUrl.current) {
         URL.revokeObjectURL(activeObjUrl.current);
@@ -19,8 +17,6 @@ export default function UploadZone({ selectedFile, onFileChange, onMetadataChang
 
   const handleFile = (file) => {
     if (!file) return;
-
-    // Revoke old object URL if exists
     if (activeObjUrl.current) {
       URL.revokeObjectURL(activeObjUrl.current);
       activeObjUrl.current = '';
